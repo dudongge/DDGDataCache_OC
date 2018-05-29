@@ -1,0 +1,19 @@
+{
+    "code":200,
+    "msg":"success",
+    "data":{
+        "time" : "1444524177",
+        "isauth" : "0",
+        "openid" : "1728484287",
+        "sex" : "男",
+        "city" : "上海",
+        "github" : "https://github.com/dudongge/DDGDataCache_OC",
+        "logintime" : "1445267749",
+        "name" : "dudongge",
+        "group" : "3",
+        "loginhit" : "4",
+        "id" : "234328",
+        "qq" : "532835032",
+        "apptoken" : "bae4c30113151270174f724f450779bc",
+    }
+}

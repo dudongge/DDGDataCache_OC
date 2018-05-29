@@ -17,56 +17,41 @@
 
 @implementation DDGDataCache
 
-+(BOOL)saveJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL{
-    
-    return [self saveJsonResponseToCacheFile:jsonResponse andURL:URL params:nil];
-}
 
-+(BOOL)saveJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL params:(nullable NSDictionary *)params{
++(BOOL)saveJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL path:(NSString *)path andSubPath:(NSString *)subPath {
     
     if(jsonResponse==nil || URL.length==0) return NO;
     NSData * data= [self jsonToData:jsonResponse];
-    return[[NSFileManager defaultManager] createFileAtPath:[self cacheFilePathWithURL:URL params:params] contents:data attributes:nil];
+    return[[NSFileManager defaultManager] createFileAtPath:[self cacheFilePathWithURL:URL path:path andSubPath:subPath] contents:data attributes:nil];
 }
 
-+(void)save_asyncJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL completed:(nullable DDGDataCacheCompletionBlock)completedBlock;{
-    
-    [self save_asyncJsonResponseToCacheFile:jsonResponse andURL:URL params:nil completed:completedBlock];
-}
-
-+(void)save_asyncJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL params:(nullable NSDictionary *)params completed:(nullable DDGDataCacheCompletionBlock)completedBlock{
-    
++(void)save_asyncJsonResponseToCacheFile:(id)jsonResponse andURL:(NSString *)URL path:(NSString *)path andSubPath:(NSString *)subPath  completed:(nullable DDGDataCacheCompletionBlock)completedBlock{
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         
-        BOOL result=[self saveJsonResponseToCacheFile:jsonResponse andURL:URL params:params];
-        
+        BOOL result=[self saveJsonResponseToCacheFile:jsonResponse andURL:URL path:path andSubPath:subPath];
         dispatch_async(dispatch_get_main_queue(), ^{
-            
             if(completedBlock)  completedBlock(result);
-            
         });
     });
 }
 
-+(id)cacheJsonWithURL:(NSString *)URL{
-    
-    return [self cacheJsonWithURL:URL params:nil];
-    
-}
 
-+(id )cacheJsonWithURL:(NSString *)URL params:(nullable NSDictionary *)params{
++(id )cacheJsonWithURL:(NSString *)URL subPath:(NSString *)subPath{
     
     if(URL==nil) return nil;
-    NSString *path = [self cacheFilePathWithURL:URL params:params];
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if ([fileManager fileExistsAtPath:path isDirectory:nil] == YES) {
-        NSData *data = [fileManager contentsAtPath:path];
-        return [self dataToJson:data];
+    NSString *keyPath = [NSUserDefaults.standardUserDefaults stringForKey:@"DDGCacheKeyPath"];
+    if (keyPath != nil && ![keyPath  isEqual: @""]) {
+        NSString *path = [self cacheFilePathWithURL:URL path:keyPath andSubPath:subPath];
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        if ([fileManager fileExistsAtPath:path isDirectory:nil] == YES) {
+            NSData *data = [fileManager contentsAtPath:path];
+            return [self dataToJson:data];
+        }
     }
     return nil;
 }
 
-+(BOOL)clearCache
++(BOOL)clearAllCache
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *path = [self cachePath];
@@ -74,8 +59,43 @@
     [self checkDirectory:[self cachePath]];
     return result;
 }
++(BOOL)clearCacheWithSubPath:(NSString *)subPath {
+    if (subPath == nil) {
+        return NO;
+    }
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *path = [self cacheSubPath:subPath];
+    BOOL result = [fileManager removeItemAtPath:path error:nil];
+    [self checkDirectory:[self cachePath]];
+    return result;
+}
 
-+ (float)cacheSize{
+
++ (float)cacheSizeWithSubPath:(NSString *)subPath {
+    NSString *directoryPath = [self cacheSubPath:subPath];
+    BOOL isDir = NO;
+    unsigned long long total = 0;
+    
+    if ([[NSFileManager defaultManager] fileExistsAtPath:directoryPath isDirectory:&isDir]) {
+        if (isDir) {
+            NSError *error = nil;
+            NSArray *array = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directoryPath error:&error];
+            
+            if (error == nil) {
+                for (NSString *subpath in array) {
+                    NSString *path = [directoryPath stringByAppendingPathComponent:subpath];
+                    NSDictionary *dict = [[NSFileManager defaultManager] attributesOfItemAtPath:path
+                                                                                          error:&error];
+                    if (!error) {
+                        total += [dict[NSFileSize] unsignedIntegerValue];
+                    }
+                }
+            }
+        }
+    }
+    return total/(1024.0*1024.0);
+}
++ (float)cacheAllSize {
     NSString *directoryPath = [self cachePath];
     BOOL isDir = NO;
     unsigned long long total = 0;
@@ -99,11 +119,25 @@
     }
     return total/(1024.0*1024.0);
 }
-
-+(NSString *)cacheSizeFormat
++(NSString *)cacheAllSizeFormat
 {
     NSString *sizeUnitString;
-    float size = [self cacheSize];
+    float size = [self cacheAllSize];
+    if(size < 1)
+    {
+        size *= 1024.0;//小于1M转化为kb
+        sizeUnitString = [NSString stringWithFormat:@"%.1fkb",size];
+    }
+    else{
+        
+        sizeUnitString = [NSString stringWithFormat:@"%.1fM",size];
+    }
+    
+    return sizeUnitString;
+}
++(NSString *)cacheAllSizeFormatWithSubPath:(NSString *)subPath {
+    NSString *sizeUnitString;
+    float size = [self cacheSizeWithSubPath:subPath];
     if(size < 1)
     {
         size *= 1024.0;//小于1M转化为kb
@@ -118,6 +152,28 @@
 }
 
 #pragma mark - private
++ (NSString *)cacheFilePathWithURL:(NSString *)URL path:(NSString *)path andSubPath: (NSString *)subPath {
+    
+    NSString *newPath = @"";
+    if ([subPath  isEqual: @""] || subPath == nil ) {
+        //保存最新的一级目录
+        [NSUserDefaults.standardUserDefaults setValue:path forKeyPath:@"DDGCacheKeyPath"];
+        [NSUserDefaults.standardUserDefaults synchronize];
+        newPath = [self cachePath];
+    } else {
+        newPath = [self cacheSubPath:subPath];
+    }
+    
+    //checkDirectory
+    [self checkDirectory:newPath];
+    //fileName
+    NSString *cacheFileNameString = [NSString stringWithFormat:@"URL:%@AppVersion:%@",URL,[self appVersionString]];
+    NSString *cacheFileName = [self md5StringFromString:cacheFileNameString];
+    
+    newPath = [NSString stringWithFormat:@"%@/%@",newPath,cacheFileName];
+    return newPath;
+}
+
 + (NSString *)cacheFilePathWithURL:(NSString *)URL params:(NSDictionary *)params{
     
     NSString *path = [self cachePath];
@@ -149,11 +205,21 @@
 
 +(NSString *)cachePath
 {
-    NSString *pathOfLibrary = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) objectAtIndex:0];
-    NSString *path = [pathOfLibrary stringByAppendingPathComponent:@"XHNetworkCache"];
-    return path;
+    NSString *keyPath = [NSUserDefaults.standardUserDefaults stringForKey:@"DDGCacheKeyPath"];
+    if (keyPath != nil && ![keyPath  isEqual: @""]) {
+        NSString *pathOfLibrary = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) objectAtIndex:0];
+        NSString *path = [pathOfLibrary stringByAppendingPathComponent:keyPath];
+        return path;
+    } else {
+        return @"";
+    }
 }
 
++(NSString *)cacheSubPath:(NSString *)subPath {
+    NSString *newPath = [NSString stringWithFormat:@"%@%@%@",[self cachePath],@"/",subPath];
+    return newPath;
+    
+}
 +(NSString *)cacheFileNameWithURL:(NSString *)URL params:(NSDictionary *)params
 {
     if(URL== nil || URL.length == 0) return nil;
